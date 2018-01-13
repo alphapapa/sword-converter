@@ -38,3 +38,113 @@ If I could build the 1.8.0 version statically, that would probably solve it, but
 I might be able to fix the output in the 1.6.2 version, but since I don't understand exactly what's going on with the buffers and strings and such, I'm not sure what to do.
 
 [2018-01-12 Fri 12:05]  I found [[https://stackoverflow.com/a/15475134][this StackOverflow answer]], and I modified the Makefile in both versions (in the =examples/cmdline= directory) to add those flags to =CXXCOMPILE= and =CXXLINK=, and it made the =examples/cmdline/lookup= file a binary instead of the shell script, but apparently only the =libsword= stuff was statically linked, because =ldd= shows that it's still dynamically linked to a bunch of general shared libraries like =libc=.  But the binary does work when I copy it out of the source directory, so I guess it will do.  This lets me statically link the 1.8.0 version of =libsword=, so I can use it with 1.6.2 still installed on the system.
+
+** [2018-01-13 Sat 04:35]  Time for database?
+
+Now that I have a decent JSON version, maybe it's time to think about SQLite database schemas.  There are two basic possibilities that I can think of:
+
+1.  One table for verses, mapping book IDs to a book table which contains book names and abbreviations.
+2.  One table for verses, with book names as strings.
+
+The second one might actually be better because of its simplicity, and with the proper indexing, it should perform fine, AFAIK.
+
+[2018-01-13 Sat 06:33]  It works!  The new =json-to-sqlite.py= script reads the flat-style JSON file (one object per verse, not hierarchical), makes a new SQLite database, and inserts the verses.  I used a Python iterator to make the code fairly simple.
+
+* Design
+
+** SQLite Database
+
+*** Features
+
+**** [[https://en.wikipedia.org/wiki/Database_index#Clustered][Clustered index]] / [[https://www.sqlite.org/withoutrowid.html][WITHOUT ROWID]]
+
+Sounds like I should use this feature.
+
+#+BEGIN_QUOTE
+Clustering alters the data block into a certain distinct order to match the index, resulting in the row data being stored in order. Therefore, only one clustered index can be created on a given database table. Clustered indices can greatly increase overall speed of retrieval, but usually only where the data is accessed sequentially in the same or reverse order of the clustered index, or when a range of items is selected.
+
+Since the physical records are in this sort order on disk, the next row item in the sequence is immediately before or after the last one, and so fewer data block reads are required. The primary feature of a clustered index is therefore the ordering of the physical data rows in accordance with the index blocks that point to them. Some databases separate the data and index blocks into separate files, others put two completely different data blocks within the same physical file(s).
+#+END_QUOTE
+
+I'm not sure if this means that I need to insert the verses in order (although I intend to, anyway).  But since the book-chapter-verse triplet won't sort in Bible-order (since book names aren't sorted alphabetically), I probably need to.  (I guess I could store book order in a separate table, but that is probably not worth the trouble.)
+
+#+BEGIN_QUOTE
+Thus, in some cases, a WITHOUT ROWID table can use about half the amount of disk space and can operate nearly twice as fast. Of course, in a real-world schema, there will typically be secondary indices and/or UNIQUE constraints, and the situation is more complicated. But even then, there can often be space and performance advantages to using WITHOUT ROWID on tables that have non-integer or composite PRIMARY KEYs.
+#+END_QUOTE
+
+Sounds like this is definitely what I should use.
+
+#+BEGIN_QUOTE
+The WITHOUT ROWID optimization is likely to be helpful for tables that have non-integer or composite (multi-column) PRIMARY KEYs and that do not store large strings or BLOBs.
+#+END_QUOTE
+
+I'm not sure what counts as a "large string," but I'm guessing that individual verses here aren't large enough to.
+
+#+BEGIN_QUOTE
+WITHOUT ROWID tables work best when individual rows are not too large. A good rule-of-thumb is that the average size of a single row in a WITHOUT ROWID table should be less than about 1/20th the size of a database page. That means that rows should not contain more than about 50 bytes each for a 1KiB page size or about 200 bytes each for 4KiB page size. WITHOUT ROWID tables will work (in the sense that they get the correct answer) for arbitrarily large rows - up to 2GB in size - but traditional rowid tables tend to work faster for large row sizes. This is because rowid tables are implemented as B*-Trees where all content is stored in the leaves of the tree, whereas WITHOUT ROWID tables are implemented using ordinary B-Trees with content stored on both leaves and intermediate nodes. Storing content in intermediate nodes mean that each intermediate node entry takes up more space on the page and thus reduces the fan-out, increasing the search cost.
+#+END_QUOTE
+
+For most verses that probably does apply (although I don't know what the page size will be, or if I should set it manually).  Most verses are probably less than 50 bytes, and probably few, if any, are 200 bytes (although I don't know if that should include the book name).
+
+#+BEGIN_QUOTE
+Note that except for a few corner-case differences detailed above, WITHOUT ROWID tables and rowid tables work the same. They both generate the same answers given the same SQL statements. So it is a simple matter to run experiments on an application, late in the development cycle, to test whether or not the use of WITHOUT ROWID tables will be helpful. A good strategy is to simply not worry about WITHOUT ROWID until near the end of product development, then go back and run tests to see if adding WITHOUT ROWID to tables with non-integer PRIMARY KEYs helps or hurts performance, and retaining the WITHOUT ROWID only in those cases where it helps.
+#+END_QUOTE
+
+Ok, so it's not a big deal, and I can easily change it later.
+
+**** [[https://www.sqlite.org/datatype3.html#collation][Collation]]
+
+#+BEGIN_QUOTE
+When SQLite compares two strings, it uses a collating sequence or collating function (two words for the same thing) to determine which string is greater or if the two strings are equal. SQLite has three built-in collating functions: BINARY, NOCASE, and RTRIM.
+
+BINARY - Compares string data using memcmp(), regardless of text encoding.
+NOCASE - The same as binary, except the 26 upper case characters of ASCII are folded to their lower case equivalents before the comparison is performed. Note that only ASCII characters are case folded. SQLite does not attempt to do full UTF case folding due to the size of the tables required.
+RTRIM - The same as binary, except that trailing space characters are ignored.
+#+END_QUOTE
+
+I guess I should probably use =NOCASE=, but for matching book names I will probably want something more advanced.
+
+**** Primary key
+
+#+BEGIN_QUOTE
+Each table in SQLite may have at most one PRIMARY KEY. If the keywords PRIMARY KEY are added to a column definition, then the primary key for the table consists of that single column. Or, if a PRIMARY KEY clause is specified as a table-constraint, then the primary key of the table consists of the list of columns specified as part of the PRIMARY KEY clause. The PRIMARY KEY clause must contain only column names — the use of expressions in an indexed-column of a PRIMARY KEY is not supported. An error is raised if more than one PRIMARY KEY clause appears in a CREATE TABLE statement. The PRIMARY KEY is optional for ordinary tables but is required for WITHOUT ROWID tables.
+#+END_QUOTE
+
+I guess I should make it on the =book=, =chapter=, and =verse= columns.
+
+**** MAYBE Full-text search
+
+Would be nice to have this in a fast way, but I'll have to look into it.
+
+**** Unique constraint
+
+#+BEGIN_QUOTE
+A UNIQUE constraint is similar to a PRIMARY KEY constraint, except that a single table may have any number of UNIQUE constraints. For each UNIQUE constraint on the table, each row must contain a unique combination of values in the columns identified by the UNIQUE constraint. For the purposes of UNIQUE constraints, NULL values are considered distinct from all other values, including other NULLs. As with PRIMARY KEYs, a UNIQUE table-constraint clause must contain only column names — the use of expressions in an indexed-column of a UNIQUE table-constraint is not supported.
+#+END_QUOTE
+
+So I do /not/ want a unique constraint on the =text= column, because even though it's unlikely that two verses in the Bible would be exactly the same, I don't know if it's actually the case, and it's theoretically possible.
+
+*** Schema
+
+**** Primary key
+
+**** Tables
+
+***** Verses
+
+#+BEGIN_SRC sql
+  CREATE TABLE verses (
+  book TEXT PRIMARY KEY,
+  chapter INTEGER PRIMARY KEY,
+  verse INTEGER PRIMARY KEY,
+  text TEXT)
+  WITHOUT ROWID;
+#+END_SRC
+
+***** Book abbreviations
+
+Might be a good idea to have this, but we'll probably still need some client-level heuristics to handle book-choosing.
+
+***** Book numbers
+
+Might be a good idea to have a table that maps book names to book numbers.  Across translations or (or...what is the right word?  codex?  anthology?  work?) types of Bibles, this might vary, but within a database, for a single translation, it would likely be useful.
