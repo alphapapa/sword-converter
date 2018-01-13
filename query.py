@@ -38,9 +38,9 @@ KEY_BOOK_REGEXP = re.compile(r"([^:]+)")
 
 # ** Queries
 
-SELECT_BOOK = "SELECT * FROM verses WHERE book=?"
-SELECT_CHAPTER = "SELECT * FROM verses WHERE book=? AND chapter=?"
-SELECT_VERSE = "SELECT * FROM verses WHERE book=? AND chapter=? AND verse=?"
+SELECT_BOOK = "SELECT * FROM verses WHERE book LIKE ?"
+SELECT_CHAPTER = "SELECT * FROM verses WHERE book LIKE ? AND chapter=?"
+SELECT_VERSE = "SELECT * FROM verses WHERE book LIKE ? AND chapter=? AND verse=?"
 
 SEARCH = "SELECT * FROM verses WHERE text MATCH ?"
 
