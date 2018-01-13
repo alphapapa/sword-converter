@@ -4,8 +4,10 @@
 
 # ** Standard library
 
+import itertools
 import json
 import logging as log
+import random
 import re
 import sqlite3
 
@@ -20,9 +22,13 @@ from click_default_group import DefaultGroup
 
 # * Constants
 
-TERM = Terminal()
-COLORIZE_REPLACEMENT = TERM.red + r"\g<0>" + TERM.normal
 FTS_OPERATORS = {"AND", "OR", "NOT"}
+
+TERM = Terminal()
+REPLACEMENT_COLORS = [TERM.red, TERM.green, TERM.yellow, TERM.blue, TERM.magenta, TERM.cyan]
+random.shuffle(REPLACEMENT_COLORS)
+COLOR_REPLACEMENTS = itertools.cycle([color + r"\g<0>" + TERM.normal
+                                      for color in REPLACEMENT_COLORS])
 
 # ** Key regexps
 
@@ -157,7 +163,7 @@ def search_sqlite(filename, key):
 
 # ** Rendering
 
-def render_plain(rows, keywords=None, color=True):
+def render_plain(rows, keywords=None, color_map=None):
     "Print ROWS.  If COLOR is True, with book/chapter/verse and KEYWORDS highlighted."
 
     if keywords:
@@ -165,11 +171,11 @@ def render_plain(rows, keywords=None, color=True):
 
     for row in rows:
         if keywords:
-            text = colorize_matches(row['text'], keywords=keywords)
+            text = colorize_matches(row['text'], keywords=keywords, color_map=color_map)
         else:
             text = row['text']
 
-        click.secho("%s %s:%s: " % (row['book'], row['chapter'], row['verse']), bold=True, nl=False, color=color)
+        click.secho("%s %s:%s: " % (row['book'], row['chapter'], row['verse']), bold=True, nl=False, color=color_map is not None)
         click.echo(text)
 
 def render_json(rows):
@@ -179,13 +185,14 @@ def row_to_dict(row):
     # NOTE: In Python 3.6, key order is preserved: <https://www.python.org/dev/peps/pep-0468/>
     return OrderedDict(book=row['book'], chapter=row['chapter'], verse=row['verse'], text=row['text'])
 
-def colorize_matches(s, keywords=None):
+def colorize_matches(s, keywords=None, color_map=None):
     "Return string S with KEYWORDS highlighted."
 
     for keyword in keywords:
+        replacement = color_map[keyword]
         # NOTE: Case will be changed when it differs.  (I wish it
         # could fix that automatically, like Emacs!)
-        s = re.sub(keyword, COLORIZE_REPLACEMENT, s, re.IGNORECASE)
+        s = re.sub(keyword, replacement, s, re.IGNORECASE)
 
     return s
 
@@ -276,8 +283,13 @@ def search(filename, keywords, output):
 
     # Render result
     if result:
+        # Prepare colors
+        color_map = {}
+        for word in keywords:
+            color_map[word] = next(COLOR_REPLACEMENTS)
+
         if output == 'plain':
-            render_plain(result, keywords=keywords)
+            render_plain(result, keywords=keywords, color_map=color_map)
 
         elif output == 'json':
             render_json(result)
