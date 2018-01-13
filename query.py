@@ -117,8 +117,20 @@ def lookup_sqlite(filename, key):
         c.execute(SELECT_CHAPTER, (book, chapter))
     elif book:
         c.execute(SELECT_BOOK, (book,))  # Note the comma, which is required (thanks, Python)
+    result = c.fetchall()
 
-    return c.fetchall()
+    if not result:
+        # Try again with wildcard after book name
+        book = book + '%'
+        if verse:
+            c.execute(SELECT_VERSE, (book, chapter, verse))
+        elif chapter:
+            c.execute(SELECT_CHAPTER, (book, chapter))
+        elif book:
+            c.execute(SELECT_BOOK, (book,))
+        result = c.fetchall()
+
+    return result
 
 # ** Search
 
