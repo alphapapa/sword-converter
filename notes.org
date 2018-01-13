@@ -75,22 +75,42 @@ Now imagine if we /did/ want to store all that metadata, if we stored it separat
 Oh, and querying the SQLite database is even faster still:
 
 #+BEGIN_EXAMPLE
-$ time ./query.py query esv.sqlite "Genesis" >/dev/null
-0.06user 0.01system 0:00.09elapsed 77%CPU (0avgtext+0avgdata 13172maxresident)k
-8inputs+0outputs (0major+2215minor)pagefaults 0swaps
+  $ time ./query.py query esv.sqlite "Genesis" >/dev/null
+  0.06user 0.01system 0:00.09elapsed 77%CPU (0avgtext+0avgdata 13172maxresident)k
+  8inputs+0outputs (0major+2215minor)pagefaults 0swaps
 #+END_EXAMPLE
 
 And I can easily change the output format too:
 
 #+BEGIN_EXAMPLE
-$ time ./query.py query --output json esv.sqlite "Genesis" >/dev/null
-0.08user 0.02system 0:00.11elapsed 99%CPU (0avgtext+0avgdata 16776maxresident)k
-0inputs+0outputs (0major+3103minor)pagefaults 0swaps
+  $ time ./query.py query --output json esv.sqlite "Genesis" >/dev/null
+  0.08user 0.02system 0:00.11elapsed 99%CPU (0avgtext+0avgdata 16776maxresident)k
+  0inputs+0outputs (0major+3103minor)pagefaults 0swaps
 #+END_EXAMPLE
 
 Which effectively gives me two-way conversion between formats.
 
 This makes everything so much easier.  Now I should be able to easily access the Bible in Emacs, too.
+
+[2018-01-13 Sat 09:17]  Added full-text search with SQLite's FTS4 engine.  It's so much faster than Diatheke:
+
+#+BEGIN_EXAMPLE
+  $ time diatheke -b ESV -s multiword -k jesus >/dev/null
+  1.40user 0.16system 0:01.58elapsed 99%CPU (0avgtext+0avgdata 27508maxresident)k
+  0inputs+0outputs (0major+5097minor)pagefaults 0swaps
+
+  $ time ./query.py search esv.sqlite "Jesus" >/dev/null
+  0.06user 0.00system 0:00.07elapsed 97%CPU (0avgtext+0avgdata 13424maxresident)k
+  0inputs+0outputs (0major+2276minor)pagefaults 0swaps
+#+END_EXAMPLE
+
+And note that Diatheke /only returns the references, not the actual text of the passages/, while this Python script returns the full text of every matching passage.  In fact, even doing full-text search on the JSON file in Python is much faster than Diatheke:
+
+#+BEGIN_EXAMPLE
+  $ time ./query.py search esv.json "Jesus" >/dev/null
+  0.12user 0.08system 0:00.21elapsed 99%CPU (0avgtext+0avgdata 40056maxresident)k
+  0inputs+0outputs (0major+7608minor)pagefaults 0swaps
+#+END_EXAMPLE
 
 * Design
 
@@ -99,6 +119,8 @@ This makes everything so much easier.  Now I should be able to easily access the
 *** Features
 
 **** [[https://en.wikipedia.org/wiki/Database_index#Clustered][Clustered index]] / [[https://www.sqlite.org/withoutrowid.html][WITHOUT ROWID]]
+
+*Note:* This is incompatible with the FTS4 engine, so we're not using this after all.
 
 Sounds like I should use this feature.
 
@@ -148,15 +170,17 @@ I guess I should probably use =NOCASE=, but for matching book names I will proba
 
 **** Primary key
 
+*Note:* Also not relevant for FTS4.
+
 #+BEGIN_QUOTE
 Each table in SQLite may have at most one PRIMARY KEY. If the keywords PRIMARY KEY are added to a column definition, then the primary key for the table consists of that single column. Or, if a PRIMARY KEY clause is specified as a table-constraint, then the primary key of the table consists of the list of columns specified as part of the PRIMARY KEY clause. The PRIMARY KEY clause must contain only column names — the use of expressions in an indexed-column of a PRIMARY KEY is not supported. An error is raised if more than one PRIMARY KEY clause appears in a CREATE TABLE statement. The PRIMARY KEY is optional for ordinary tables but is required for WITHOUT ROWID tables.
 #+END_QUOTE
 
 I guess I should make it on the =book=, =chapter=, and =verse= columns.
 
-**** MAYBE Full-text search
+**** DONE Full-text search
 
-Would be nice to have this in a fast way, but I'll have to look into it.
+Works great with SQLite's FTS4 engine.
 
 **** Unique constraint
 
@@ -181,6 +205,16 @@ So I do /not/ want a unique constraint on the =text= column, because even though
   verse INTEGER PRIMARY KEY,
   text TEXT)
   WITHOUT ROWID;
+#+END_SRC
+
+FTS4 version:
+
+#+BEGIN_SRC sql
+  CREATE VIRTUAL TABLE verses USING fts4 (
+  book TEXT,
+  chapter INTEGER,
+  verse INTEGER,
+  text TEXT);
 #+END_SRC
 
 ***** Book abbreviations

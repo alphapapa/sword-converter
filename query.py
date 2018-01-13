@@ -30,6 +30,8 @@ SELECT_BOOK = "SELECT * FROM verses WHERE book=?"
 SELECT_CHAPTER = "SELECT * FROM verses WHERE book=? AND chapter=?"
 SELECT_VERSE = "SELECT * FROM verses WHERE book=? AND chapter=? AND verse=?"
 
+SEARCH = "SELECT * FROM verses WHERE text MATCH ?"
+
 # * Functions
 
 def json_to_dict_hierarchical(json):
@@ -40,15 +42,20 @@ def json_to_dict_hierarchical(json):
 def split_key(key):
     "Return book, chapter, and verse for KEY."
 
+    # NOTE: chapter and verse must be converted to integers, because,
+    # depending on how the table was created, SQLite does not always
+    # accept strings for these numbers.  (The non-FTS table accepted
+    # them, but the FTS table requires them to actually be integers.)
+
     # I wish there were a more elegant way to do this, but Python isn't Lisp.
     m = KEY_BOOK_CHAPTER_VERSE_REGEXP.match(key)
     if m:
         # Book
-        return (m.group(1), m.group(2), m.group(3))
+        return (m.group(1), int(m.group(2)), int(m.group(3)))
     else:
         m = KEY_BOOK_CHAPTER_REGEXP.match(key)
         if m:
-            return (m.group(1), m.group(2), None)
+            return (m.group(1), int(m.group(2)), None)
         else:
             m = KEY_BOOK_REGEXP.match(key)
             if m:
@@ -56,7 +63,7 @@ def split_key(key):
 
 # ** Query
 
-def query_json(filename, key):
+def lookup_json(filename, key):
     "Query JSON FILENAME for KEY."
 
     (book, chapter, verse) = split_key(key)
@@ -81,7 +88,7 @@ def query_json(filename, key):
 
     return result
 
-def query_sqlite(filename, key):
+def lookup_sqlite(filename, key):
     "Query SQLite database FILENAME for KEY."
 
     (book, chapter, verse) = split_key(key)
@@ -101,6 +108,32 @@ def query_sqlite(filename, key):
 
     return c.fetchall()
 
+# ** Search
+
+def search_json(filename, key):
+    "Search JSON FILENAME for KEY."
+
+    # Load JSON
+    with open(filename) as f:
+        verses = json.load(f)
+
+    # Find matches
+    return [v for v in verses
+            if key in v['text']]
+
+def search_sqlite(filename, key):
+    "Search SQLite database FILENAME for KEY."
+
+    # Connect to database
+    con = sqlite3.connect(filename)
+    c = con.cursor()
+    c.row_factory = sqlite3.Row
+
+    # Run query
+    c.execute(SEARCH, (key,))
+
+    return c.fetchall()
+
 # ** Rendering
 
 def render_plain(rows):
@@ -116,7 +149,7 @@ def row_to_dict(row):
 
 # * Click
 
-@click.group(cls=DefaultGroup, default='query')
+@click.group(cls=DefaultGroup, default='lookup')
 @click.option('-v', '--verbose', count=True)
 def cli(verbose):
 
@@ -138,14 +171,37 @@ def cli(verbose):
 @click.argument('filename', type=click.Path(exists=True))
 @click.argument('key', type=str)
 @click.option('--output', type=str, default='plain')
-def query(filename, key, output):
-    """Query FILENAME (SQLite database or JSON file) for KEY (e.g. "Genesis 1:1")."""
+def lookup(filename, key, output):
+    """Lookup KEY (e.g. "Genesis 1:1") in FILENAME (SQLite database or JSON file)."""
 
     # Run query
     if filename.endswith('json'):
-        result = query_json(filename, key)
+        result = lookup_json(filename, key)
     elif filename.endswith('sqlite'):
-        result = query_sqlite(filename, key)
+        result = lookup_sqlite(filename, key)
+
+    # Render result
+    if result:
+        if output == 'plain':
+            render_plain(result)
+
+        elif output == 'json':
+            render_json(result)
+
+# *** search
+
+@click.command()
+@click.argument('filename', type=click.Path(exists=True))
+@click.argument('key', type=str)
+@click.option('--output', type=str, default='plain')
+def search(filename, key, output):
+    """Search for KEY (a string) in FILENAME (SQLite database or JSON file)."""
+
+    # Run query
+    if filename.endswith('json'):
+        result = search_json(filename, key)
+    elif filename.endswith('sqlite'):
+        result = search_sqlite(filename, key)
 
     # Render result
     if result:
@@ -158,6 +214,7 @@ def query(filename, key, output):
 # * Main
 
 if __name__ == "__main__":
-    cli.add_command(query)
+    cli.add_command(lookup)
+    cli.add_command(search)
 
     cli()

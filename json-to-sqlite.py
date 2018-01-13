@@ -25,6 +25,12 @@ text TEXT,
 PRIMARY KEY(book, chapter, verse))
 WITHOUT ROWID;"""
 
+CREATE_TABLE_FTS = """CREATE VIRTUAL TABLE verses USING fts4 (
+book TEXT,
+chapter INTEGER,
+verse INTEGER,
+text TEXT)"""
+
 INSERT_VERSES = "INSERT INTO verses(book, chapter, verse, text) VALUES (?, ?, ?, ?)"
 
 # * Classes
@@ -94,8 +100,10 @@ def convert(json_filename, db_filename, force=False):
     # Create database and insert verses
     con = sqlite3.connect(db_filename)
     with con:
-        con.execute(CREATE_TABLE)
+        con.execute(CREATE_TABLE_FTS)
         con.executemany(INSERT_VERSES, verses)
+        con.execute("INSERT INTO verses(verses) VALUES('optimize')")
+        con.execute("VACUUM verses")
 
 # * Main
 
