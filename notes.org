@@ -52,6 +52,46 @@ The second one might actually be better because of its simplicity, and with the 
 
 I also wrote a Python script yesterday, =json-verses-to-bible.py=, that converts a flat JSON list of objects to a hierarchical object.  Seems like that could be handy, but it's easier to insert the flat version into the database, and that's what the C++ program makes.
 
+I guess now I'll write a Python script to query the database...
+
+** [2018-01-13 Sat 07:50]  Python is faster than the C++ SWORD API
+
+This is amazing:
+
+#+BEGIN_EXAMPLE
+$ time ./query.py query esv.json "Genesis" >/dev/null
+0.14user 0.07system 0:00.21elapsed 98%CPU (0avgtext+0avgdata 40204maxresident)k
+0inputs+0outputs (0major+10468minor)pagefaults 0swaps
+
+$ time diatheke -b ESV -k "Genesis" >/dev/null
+0.37user 0.02system 0:00.41elapsed 98%CPU (0avgtext+0avgdata 23328maxresident)k
+0inputs+0outputs (0major+3792minor)pagefaults 0swaps
+#+END_EXAMPLE
+
+Printing the entire book of Genesis, parsed from a JSON file containing the entire ESV (minus all the metadata the SWORD formats can contain) is about twice as fast as printing Genesis using Diatheke, which is written in C++ and uses the SWORD C++ libraries.
+
+Now imagine if we /did/ want to store all that metadata, if we stored it separately from the plain-text of the translation.  Whether SQLite or JSON, imagine how much faster it would be!
+
+Oh, and querying the SQLite database is even faster still:
+
+#+BEGIN_EXAMPLE
+$ time ./query.py query esv.sqlite "Genesis" >/dev/null
+0.06user 0.01system 0:00.09elapsed 77%CPU (0avgtext+0avgdata 13172maxresident)k
+8inputs+0outputs (0major+2215minor)pagefaults 0swaps
+#+END_EXAMPLE
+
+And I can easily change the output format too:
+
+#+BEGIN_EXAMPLE
+$ time ./query.py query --output json esv.sqlite "Genesis" >/dev/null
+0.08user 0.02system 0:00.11elapsed 99%CPU (0avgtext+0avgdata 16776maxresident)k
+0inputs+0outputs (0major+3103minor)pagefaults 0swaps
+#+END_EXAMPLE
+
+Which effectively gives me two-way conversion between formats.
+
+This makes everything so much easier.  Now I should be able to easily access the Bible in Emacs, too.
+
 * Design
 
 ** SQLite Database
