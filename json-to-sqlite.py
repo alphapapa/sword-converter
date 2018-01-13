@@ -95,13 +95,19 @@ def convert(json_filename, db_filename, force=False):
 
     # Read JSON file
     with open(json_filename) as f:
-        verses = VersesIterator(json.load(f))
+        verses = json.load(f)
+
+    # Some modules (e.g. SBLGNT) don't have the whole Bible.  We
+    # should probably have the SWORD-JSON converter skip those, but
+    # until then, we can filter them easily here.
+    verses = [v for v in verses
+              if v['text']]
 
     # Create database and insert verses
     con = sqlite3.connect(db_filename)
     with con:
         con.execute(CREATE_TABLE_FTS)
-        con.executemany(INSERT_VERSES, verses)
+        con.executemany(INSERT_VERSES, VersesIterator(verses))
         con.execute("INSERT INTO verses(verses) VALUES('optimize')")
         con.execute("VACUUM verses")
 
