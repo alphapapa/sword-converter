@@ -236,10 +236,12 @@ def cli(verbose):
 
 @click.command()
 @click.argument('filename', type=click.Path(exists=True))
-@click.argument('key', type=str)
+@click.argument('key', type=str, nargs=-1)
 @click.option('--output', type=str, default='plain')
 def lookup(filename, key, output):
     """Lookup KEY (e.g. "Genesis 1:1") in FILENAME (SQLite database or JSON file)."""
+
+    key = " ".join(key)
 
     # Run query
     if filename.endswith('json'):
@@ -263,7 +265,7 @@ def lookup(filename, key, output):
 @click.command()
 @click.argument('filename', type=click.Path(exists=True))
 @click.argument('keywords', type=str, nargs=-1)
-@click.option('--output', type=str, default='plain')
+@click.option('--output', type=click.Choice(['plain', 'json']), default='plain')
 def search(filename, keywords, output):
     """Search for KEYWORDS in FILENAME (SQLite database or JSON file)."""
 
