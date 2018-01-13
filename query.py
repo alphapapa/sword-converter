@@ -176,11 +176,13 @@ def search_sqlite(filename, key):
 # ** Rendering
 
 def render_plain(rows, keywords=None, color_map=None):
-    "Print ROWS.  If COLOR is True, with book/chapter/verse and KEYWORDS highlighted."
+    "Print ROWS.  If COLOR_MAP is True, with book/chapter/verse and KEYWORDS highlighted according to it."
 
+    # Remove search operators
     if keywords:
         keywords = filter_keywords(keywords)
 
+    # Print rows
     for row in rows:
         if keywords:
             text = colorize_matches(row['text'], keywords=keywords, color_map=color_map)
@@ -189,13 +191,6 @@ def render_plain(rows, keywords=None, color_map=None):
 
         click.secho("%s %s:%s: " % (row['book'], row['chapter'], row['verse']), bold=True, nl=False, color=color_map is not None)
         click.echo(text)
-
-def render_json(rows):
-    print(json.dumps(list(row_to_dict(row) for row in rows), indent=2))
-
-def row_to_dict(row):
-    # NOTE: In Python 3.6, key order is preserved: <https://www.python.org/dev/peps/pep-0468/>
-    return OrderedDict(book=row['book'], chapter=row['chapter'], verse=row['verse'], text=row['text'])
 
 def colorize_matches(s, keywords=None, color_map=None):
     "Return string S with KEYWORDS highlighted."
@@ -225,6 +220,17 @@ def filter_keywords(keywords):
 
     return keywords
 
+def render_json(rows):
+    "Print ROWS as JSON."
+
+    print(json.dumps(list(row_to_dict(row) for row in rows), indent=2))
+
+def row_to_dict(row):
+    "Return ROW as an OrderedDict."
+
+    # NOTE: In Python 3.6, key order is preserved: <https://www.python.org/dev/peps/pep-0468/>
+    return OrderedDict(book=row['book'], chapter=row['chapter'], verse=row['verse'], text=row['text'])
+
 # * Click
 
 @click.group(cls=DefaultGroup, default='lookup')
@@ -244,7 +250,7 @@ def cli(verbose):
 
 # ** Commands
 
-# *** query
+# *** lookup
 
 @click.command()
 @click.argument('filename', type=click.Path(exists=True))

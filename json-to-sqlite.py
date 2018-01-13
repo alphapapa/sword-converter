@@ -48,7 +48,7 @@ class VersesIterator():
 
         return (current['book'], current['chapter'], current['verse'], current['text'])
 
-      # Seems that both __next__ and next are required, but they should do the same thing...?
+    # Seems that both __next__ and next are required, but they should do the same thing...?
     __next__ = next
 
 # * Functions
