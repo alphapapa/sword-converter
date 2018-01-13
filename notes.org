@@ -50,6 +50,8 @@ The second one might actually be better because of its simplicity, and with the 
 
 [2018-01-13 Sat 06:33]  It works!  The new =json-to-sqlite.py= script reads the flat-style JSON file (one object per verse, not hierarchical), makes a new SQLite database, and inserts the verses.  I used a Python iterator to make the code fairly simple.
 
+I also wrote a Python script yesterday, =json-verses-to-bible.py=, that converts a flat JSON list of objects to a hierarchical object.  Seems like that could be handy, but it's easier to insert the flat version into the database, and that's what the C++ program makes.
+
 * Design
 
 ** SQLite Database
