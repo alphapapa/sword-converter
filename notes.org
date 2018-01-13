@@ -112,7 +112,28 @@ And note that Diatheke /only returns the references, not the actual text of the 
   0inputs+0outputs (0major+7608minor)pagefaults 0swaps
 #+END_EXAMPLE
 
+** [2018-01-13 Sat 12:34]  Ranges next?
+:PROPERTIES:
+:ID:       94ff98fd-ff8b-480f-9109-f007c750bc9a
+:END:
+
+Another thing I'd like to do is support range queries.  To do that properly, between books, requires that we know what order the books are in.  Of course, that's very easy with SQL:
+
+#+BEGIN_SRC sql
+  SELECT DISTINCT book FROM verses
+#+END_SRC
+
+But that's the simple part.  The in-between across books is easy (just select all verses in those books), but the beginning and end of the range requires going up to the end of each chapter/verse in the range.  (I feel like this would be a lot easier to do in Lisp.)
+
 * Design
+
+** Query script
+
+*** Features
+
+**** TODO Ranges
+
++ [[id:94ff98fd-ff8b-480f-9109-f007c750bc9a][{2018-01-13 Sat 12:34}  Ranges next?]]
 
 ** SQLite Database
 
