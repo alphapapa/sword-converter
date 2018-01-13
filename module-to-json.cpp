@@ -6,6 +6,14 @@
 // the Sword source tree, or as a different file, this file should be
 // copied over lookup.cpp and then built as that program.
 
+// TODO: Might be able to use stripText() function, which is mentioned in swmodule.h:
+
+// /** Produces plain text, without markup, of the module entry at the supplied key
+//  * @param tmpKey desired module entry
+//  * @return result buffer
+//  */
+// virtual const char *stripText(const SWKey *tmpKey);
+
 /******************************************************************************
  *
  *  lookup.cpp -	Simple example of how to retrieve an entry from a
