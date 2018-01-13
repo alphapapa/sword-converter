@@ -135,6 +135,20 @@ But that's the simple part.  The in-between across books is easy (just select al
 
 + [[id:94ff98fd-ff8b-480f-9109-f007c750bc9a][{2018-01-13 Sat 12:34}  Ranges next?]]
 
+*** Docs
+
++  Python
+     -  Core
+          +  [[https://docs.python.org/3/library/re.html][6.2. re — Regular expression operations — Python 3.6.4 documentation]]
+          +  [[https://docs.python.org/3/library/sqlite3.html][12.6. sqlite3 — DB-API 2.0 interface for SQLite databases — Python 3.6.4 documentation]]
+     -  Packages
+          +  [[https://pypi.python.org/pypi/blessings][blessings 1.6.1 : Python Package Index]]
+          +  [[http://click.pocoo.org/5/][Click Documentation (5.0)]]
+          +  [[https://pypi.python.org/pypi/colorama][colorama 0.3.9 : Python Package Index]]
++  SQLite
+     -  [[https://www.sqlite.org/lang.html][Query Language Understood by SQLite]]
+     -  [[https://www.sqlite.org/fts3.html][SQLite FTS3 and FTS4 Extensions]]
+
 ** SQLite Database
 
 *** Features
