@@ -50,10 +50,3 @@ current_book[current_chapter_number] = current_chapter
 bible[current_book_name] = current_book
 
 print(json.dumps(bible, indent=2))
-print(sum(len(bible[book][chapter])
-               for book in bible
-               for chapter in bible[book]))
-
-print([len(bible[book][chapter])
-               for book in bible
-               for chapter in bible[book]])
