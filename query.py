@@ -13,10 +13,14 @@ from collections import OrderedDict
 
 # ** 3rd-party
 
+from blessings import Terminal
+
 import click
 from click_default_group import DefaultGroup
 
 # * Constants
+
+FTS_OPERATORS = {"AND", "OR", "NOT"}
 
 # ** Key regexps
 
@@ -110,16 +114,31 @@ def lookup_sqlite(filename, key):
 
 # ** Search
 
-def search_json(filename, key):
-    "Search JSON FILENAME for KEY."
+def search_json(filename, query):
+    "Search JSON FILENAME for QUERY."
+
+    # NOTE: Does not currently support boolean matching like the
+    # SQLite function.
+
+    # Split query into keywords
+    query = query.split()
 
     # Load JSON
     with open(filename) as f:
         verses = json.load(f)
 
     # Find matches
-    return [v for v in verses
-            if key in v['text']]
+    result = []
+    for v in verses:
+        found = True
+        for key in query:
+            if not key in v['text']:
+               found = False
+               break
+        if found:
+            result.append(v)
+
+    return result
 
 def search_sqlite(filename, key):
     "Search SQLite database FILENAME for KEY."
@@ -136,9 +155,20 @@ def search_sqlite(filename, key):
 
 # ** Rendering
 
-def render_plain(rows):
+def render_plain(rows, keywords=None, color=True):
+    "Print ROWS.  If COLOR is True, with KEYWORDS highlighted."
+
+    if keywords:
+        keywords = filter_keywords(keywords)
+
     for row in rows:
-        print("%s %s:%s: %s" % (row['book'], row['chapter'], row['verse'], row['text']))
+        if keywords:
+            text = colorize_matches(row['text'], keywords=keywords)
+        else:
+            text = row['text']
+
+        click.secho("%s %s:%s: " % (row['book'], row['chapter'], row['verse']), bold=True, nl=False, color=color)
+        click.echo(text)
 
 def render_json(rows):
     print(json.dumps(list(row_to_dict(row) for row in rows), indent=2))
@@ -146,6 +176,54 @@ def render_json(rows):
 def row_to_dict(row):
     # NOTE: In Python 3.6, key order is preserved: <https://www.python.org/dev/peps/pep-0468/>
     return OrderedDict(book=row['book'], chapter=row['chapter'], verse=row['verse'], text=row['text'])
+
+def colorize_matches(s, keywords=None):
+    "Return string S with KEYWORDS highlighted."
+
+    for keyword in keywords:
+        split = s.split(keyword)
+        s = [split[0]]
+
+        parts = split[1:-1]
+        if not parts:
+            # Only one match: give for loop something to iterate on
+            parts=['']
+        for part in parts:
+            s.append(term.red)
+            s.append(keyword)
+            s.append(term.normal)
+            s.append(part)
+
+        # Add last part
+        s.append(split[-1])
+        # Rejoin parts
+        s = "".join(s)
+
+    return s
+
+def colorize_matches(s, keywords=None):
+    "Return string S with KEYWORDS highlighted."
+
+    replace = term.red + "\\1" + term.normal
+
+    for keyword in keywords:
+        # NOTE: Case may be changed
+        keyword = r"(%s)" % keyword
+        s = re.sub(keyword, replace, s, re.IGNORECASE)
+
+    return s
+
+def filter_keywords(keywords):
+    "Return KEYWORDS without SQLite FTS4 special operators."
+
+    keywords = set(keywords)
+    keywords = keywords.difference(FTS_OPERATORS)
+
+    # Remove words starting with a minus sign
+    keywords = [word for word in keywords
+         if not word.startswith("-")]
+
+    return keywords
 
 # * Click
 
@@ -192,21 +270,29 @@ def lookup(filename, key, output):
 
 @click.command()
 @click.argument('filename', type=click.Path(exists=True))
-@click.argument('key', type=str)
+@click.argument('keywords', type=str, nargs=-1)
 @click.option('--output', type=str, default='plain')
-def search(filename, key, output):
-    """Search for KEY (a string) in FILENAME (SQLite database or JSON file)."""
+def search(filename, keywords, output):
+    """Search for KEYWORDS in FILENAME (SQLite database or JSON file)."""
+
+    # Normalize query into a string
+    query = " ".join(keywords)
+
+    # Split query into keywords for later
+    keywords = filter_keywords(query.split())
 
     # Run query
     if filename.endswith('json'):
-        result = search_json(filename, key)
+        result = search_json(filename, query)
     elif filename.endswith('sqlite'):
-        result = search_sqlite(filename, key)
+        # Use SQLite FTS4 implicit AND operator by joining words with a space
+
+        result = search_sqlite(filename, query)
 
     # Render result
     if result:
         if output == 'plain':
-            render_plain(result)
+            render_plain(result, keywords=keywords)
 
         elif output == 'json':
             render_json(result)
@@ -214,6 +300,9 @@ def search(filename, key, output):
 # * Main
 
 if __name__ == "__main__":
+    # For colorizing with blessings
+    term = Terminal()
+
     cli.add_command(lookup)
     cli.add_command(search)
 

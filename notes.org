@@ -178,9 +178,48 @@ Each table in SQLite may have at most one PRIMARY KEY. If the keywords PRIMARY K
 
 I guess I should make it on the =book=, =chapter=, and =verse= columns.
 
-**** DONE Full-text search
+**** UNDERWAY Full-text search
+:LOGBOOK:
+-  State "UNDERWAY"   from "DONE"       [2018-01-13 Sat 11:03]
+:END:
 
 Works great with SQLite's FTS4 engine.
+
+***** TODO Query syntax
+:LOGBOOK:
+-  State "TODO"       from              [2018-01-13 Sat 11:03]
+:END:
+
+Note this from the FTS docs:
+
+#+BEGIN_QUOTE
+The FTS modules may be compiled to use one of two slightly different versions of the full-text query syntax, the "standard" query syntax and the "enhanced" query syntax. The basic term, term-prefix, phrase and NEAR queries described above are the same in both versions of the syntax. The way in which set operations are specified is slightly different. The following two sub-sections describe the part of the two query syntaxes that pertains to set operations. Refer to the description of how to compile fts for compilation notes.
+#+END_QUOTE
+
+And one of the key differences is:
+
+#+BEGIN_QUOTE
+FTS query set operations using the standard query syntax are similar, but not identical, to set operations with the enhanced query syntax. There are four differences, as follows:
+
+1.  Only the implicit version of the AND operator is supported. Specifying the string "AND" as part of a standard query syntax query is interpreted as a term query for the set of documents containing the term "and".
+#+END_QUOTE
+
+Apparently my SQLite uses the standard syntax, because when I search for =Jesus AND Paul AND apostle AND called=, I only get one result:
+
+#+BEGIN_EXAMPLE
+  1 Corinthians 1:1: Paul, called by the will of God to be an apostle of Christ Jesus, and our brother Sosthenes,
+#+END_EXAMPLE
+
+While if I search for =Jesus Paul apostle called= I get:
+
+#+BEGIN_EXAMPLE
+  Romans 1:1: Paul, a servant of Christ Jesus, called to be an apostle, set apart for the gospel of God,
+  I Corinthians 1:1: Paul, called by the will of God to be an apostle of Christ Jesus, and our brother Sosthenes,
+#+END_EXAMPLE
+
+So the =AND= is interpreted literally, and Ro 1:1 is not returned because it doesn't have =and= in it.
+
+I can't control this, because it depends on how the local SQLite copy is compiled, so I'll have to document it in the readme.
 
 **** Unique constraint
 
