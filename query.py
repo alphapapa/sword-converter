@@ -269,7 +269,6 @@ def search(filename, keywords, output):
 
     # Normalize query into a string
     query = " ".join(keywords)
-
     # Split query into keywords for later
     keywords = filter_keywords(query.split())
 
@@ -277,8 +276,6 @@ def search(filename, keywords, output):
     if filename.endswith('json'):
         result = search_json(filename, query)
     elif filename.endswith('sqlite'):
-        # Use SQLite FTS4 implicit AND operator by joining words with a space
-
         result = search_sqlite(filename, query)
 
     # Render result
@@ -290,7 +287,6 @@ def search(filename, keywords, output):
 
         if output == 'plain':
             render_plain(result, keywords=keywords, color_map=color_map)
-
         elif output == 'json':
             render_json(result)
     else:
