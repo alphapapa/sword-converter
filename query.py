@@ -20,6 +20,8 @@ from click_default_group import DefaultGroup
 
 # * Constants
 
+TERM = Terminal()
+COLORIZE_REPLACEMENT = TERM.red + r"\g<0>" + TERM.normal
 FTS_OPERATORS = {"AND", "OR", "NOT"}
 
 # ** Key regexps
@@ -156,7 +158,7 @@ def search_sqlite(filename, key):
 # ** Rendering
 
 def render_plain(rows, keywords=None, color=True):
-    "Print ROWS.  If COLOR is True, with KEYWORDS highlighted."
+    "Print ROWS.  If COLOR is True, with book/chapter/verse and KEYWORDS highlighted."
 
     if keywords:
         keywords = filter_keywords(keywords)
@@ -181,35 +183,9 @@ def colorize_matches(s, keywords=None):
     "Return string S with KEYWORDS highlighted."
 
     for keyword in keywords:
-        split = s.split(keyword)
-        s = [split[0]]
-
-        parts = split[1:-1]
-        if not parts:
-            # Only one match: give for loop something to iterate on
-            parts=['']
-        for part in parts:
-            s.append(term.red)
-            s.append(keyword)
-            s.append(term.normal)
-            s.append(part)
-
-        # Add last part
-        s.append(split[-1])
-        # Rejoin parts
-        s = "".join(s)
-
-    return s
-
-def colorize_matches(s, keywords=None):
-    "Return string S with KEYWORDS highlighted."
-
-    replace = term.red + "\\1" + term.normal
-
-    for keyword in keywords:
-        # NOTE: Case may be changed
-        keyword = r"(%s)" % keyword
-        s = re.sub(keyword, replace, s, re.IGNORECASE)
+        # NOTE: Case will be changed when it differs.  (I wish it
+        # could fix that automatically, like Emacs!)
+        s = re.sub(keyword, COLORIZE_REPLACEMENT, s, re.IGNORECASE)
 
     return s
 
@@ -219,9 +195,14 @@ def filter_keywords(keywords):
     keywords = set(keywords)
     keywords = keywords.difference(FTS_OPERATORS)
 
-    # Remove words starting with a minus sign
+    # Remove words starting with a minus sign.  NOTE: This is correct
+    # for FTS basic syntax, but I'm not sure about the extended
+    # syntax.  I'm guessing it's uncommon for SQLite to be compiled
+    # with the extended syntax, and even if extended syntax is on,
+    # it's not likely anyone will search for "-word" and not intend to
+    # exclude it.
     keywords = [word for word in keywords
-         if not word.startswith("-")]
+                if not word.startswith("-")]
 
     return keywords
 
@@ -230,6 +211,7 @@ def filter_keywords(keywords):
 @click.group(cls=DefaultGroup, default='lookup')
 @click.option('-v', '--verbose', count=True)
 def cli(verbose):
+    "Main CLI function."
 
     # Setup logging
     if verbose >= 2:
@@ -266,6 +248,9 @@ def lookup(filename, key, output):
         elif output == 'json':
             render_json(result)
 
+    else:
+        raise click.UsageError("%s not found" % key)
+
 # *** search
 
 @click.command()
@@ -296,13 +281,12 @@ def search(filename, keywords, output):
 
         elif output == 'json':
             render_json(result)
+    else:
+        raise click.UsageError("No matches found for: %s" % query)
 
 # * Main
 
 if __name__ == "__main__":
-    # For colorizing with blessings
-    term = Terminal()
-
     cli.add_command(lookup)
     cli.add_command(search)
 
