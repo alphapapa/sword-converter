@@ -1,4 +1,4 @@
-
+#+OPTIONS: num:nil
 
 * Notes
 
@@ -124,6 +124,321 @@ Another thing I'd like to do is support range queries.  To do that properly, bet
 #+END_SRC
 
 But that's the simple part.  The in-between across books is easy (just select all verses in those books), but the beginning and end of the range requires going up to the end of each chapter/verse in the range.  (I feel like this would be a lot easier to do in Lisp.)
+
+** [2018-01-13 Sat 15:59]  Experimenting with compression
+
+Been experimenting with compressing the SQLite database.  There is no built-in compression for SQLite except in the proprietary version.  But it [[https://www.sqlite.org/fts3.html#the_compress_and_uncompress_options][does]] support compression through SQL scalar functions registered with =sqlite3_create_function()=, which I discovered through a Google search that brought up [[http://www.perlmonks.org/?node_id=1064966][this PerlMonks question]].  (It is in the SQLite manual, but I didn't realize that functions from the calling DBI's language can be used, so e.g. Python functions can be registered.)
+
+There are a few different approaches that can be used:
+
+*** Uncompressed, non-FTS, =WITHOUT ROWID=
+
+Without FTS, you don't get the FTS index, but doing FTS with plain =LIKE= (instead of the FTS-specific =MATCH=) is actually quite fast.
+
+#+BEGIN_SRC sql
+  CREATE TABLE verses (
+  book TEXT,
+  chapter INTEGER,
+  verse INTEGER,
+  text BLOB,
+  PRIMARY KEY(book, chapter, verse))
+  WITHOUT ROWID
+#+END_SRC
+
+Note that using the =sqlite3= utility is faster than the Python script, of course.  We can't use =sqlite3= on the compressed versions anyway, but it's still impressive that the uncompressed, non-FTS one does the raw SQLite search in 0.04 seconds:
+
+#+BEGIN_EXAMPLE
+  $ time sqlite3 esv.without-rowid.sqlite "SELECT * FROM verses WHERE text LIKE '%Moses%'" >/dev/null
+  0.02user 0.01system 0:00.04elapsed 90%CPU (0avgtext+0avgdata 5288maxresident)k
+  0inputs+0outputs (0major+811minor)pagefaults 0swaps
+#+END_EXAMPLE
+
+The Python script is still quick:
+
+#+BEGIN_EXAMPLE
+  $ time ./query.py search esv.without-rowid.sqlite Moses >/dev/null
+  0.12user 0.00system 0:00.13elapsed 98%CPU (0avgtext+0avgdata 17712maxresident)k
+  0inputs+0outputs (0major+3040minor)pagefaults 0swaps
+#+END_EXAMPLE
+
+Selection is done normally:
+
+#+BEGIN_SRC sql
+  -- NOTE: The keyword for the LIKE must be surrounded with % signs in Python.
+  SELECT * FROM verses WHERE text LIKE ?
+#+END_SRC
+
+0.13 seconds for searching the whole ESV for any verse containing "Moses" is really fast--much faster than Diatheke, which takes 1.24 seconds (without returning the actual text of the matches)!  So this is actually quite a viable solution.  However, as we'll see, the FTS4 tables do search much faster (0.00 seconds for a =MATCH "Moses"=).
+
+The file is smaller than the FTS versions: 6.4 MB.
+
+*** Uncompressed, FTS
+
+Without compression, it's all very simple:
+
+#+BEGIN_SRC sql
+  CREATE VIRTUAL TABLE verses USING fts4 (
+  book TEXT,
+  chapter INTEGER,
+  verse INTEGER,
+  text TEXT)
+#+END_SRC
+
+#+BEGIN_SRC sql
+  SELECT * FROM verses WHERE text MATCH ?
+#+END_SRC
+
+And it's quick:
+
+#+BEGIN_EXAMPLE
+  $ time sqlite3 esv.fts.sqlite "SELECT * FROM verses WHERE text MATCH 'Moses'" >/dev/null
+  0.00user 0.00system 0:00.00elapsed 66%CPU (0avgtext+0avgdata 3664maxresident)k
+  0inputs+0outputs (0major+333minor)pagefaults 0swaps
+#+END_EXAMPLE
+
+Yes, actually 0.00 seconds (well, less than =time= can measure, anyway, and with =sqlite3=, not the Python script), and that's returning the full text of every match.  The Python script is also pretty fast, at 0.10 seconds.  The size is the largest: 9.3 MB.
+
+*** Compressed, non-FTS, =WITHOUT ROWID=
+
+Without FTS, it's simple to insert data with certain fields compressed using Python's Zlib or LZMA functions.  This means you don't get the FTS index, but doing FTS with plain =LIKE= (instead of the FTS-specific =MATCH=) is still reasonably fast.
+
+Selection is done with manual decompression:
+
+#+BEGIN_SRC python
+  def decompress(data):
+      return zlib.decompress(data).decode('utf-8')
+
+  con = sqlite3.connect(filename)
+  con.create_function("decompress", 1, decompress)
+
+  # Note that when using the Python sqlite3.Row row_factory, the field
+  # names used include the decompression function, like:
+  row['decompress(text)']
+#+END_SRC
+
+#+BEGIN_SRC sql
+  SELECT book, chapter, verse, decompress(text) FROM verses WHERE book LIKE ? AND chapter=? AND verse=?
+#+END_SRC
+
+Searching this way is slower, at 0.33 seconds:
+
+#+BEGIN_EXAMPLE
+  $ time ./query.py search esv.compressed.zlib.without-rowid.sqlite Moses >/dev/null
+  0.32user 0.00system 0:00.33elapsed 98%CPU (0avgtext+0avgdata 17732maxresident)k
+  0inputs+0outputs (0major+3053minor)pagefaults 0swaps
+#+END_EXAMPLE
+
+Decompressing every verse to match against is is slower, but still much faster than Diatheke's 1.24 seconds!
+
+And this results in the smallest file: 3.8 MB compressed.
+
+*** Compressed, pure FTS
+
+Using FTS, the =compress= and =uncompress= options can be passed to the =CREATE TABLE= statement, specifying Python functions to handle compression and decompression (and the same decompression function must be used in the query script).  This reduced the size from 9.3 MB to about 8.1 MB.  I say "about" because I only got it to work by not storing the chapter and verse numbers.  I think it's a data-type problem, as mentioned in the manual:
+
+#+BEGIN_QUOTE
+When implementing the compress and uncompress functions it is important to pay attention to data types. Specifically, when a user reads a value from a compressed FTS table, the value returned by FTS is exactly the same as the value returned by the uncompress function, including the data type. If that data type is not the same as the data type of the original value as passed to the compress function (for example if the uncompress function is returning BLOB when compress was originally passed TEXT), then the users query may not function as expected.
+#+END_QUOTE
+
+I think it wasn't working because I was trying to store the numbers as integers, and the compression/decompression functions I made were for strings.  I could probably fix that with some more fiddling.
+
+For creation and insertion:
+
+#+BEGIN_SRC sql
+  CREATE VIRTUAL TABLE verses USING fts4 (
+  book, text,
+  compress=compress, uncompress=decompress)
+#+END_SRC
+
+#+BEGIN_SRC python
+  con = sqlite3.connect(db_filename)
+
+  def compress(s):
+      return zlib.compress(s.encode('utf-8'), 9)
+
+  con.create_function("compress", 1, compress)
+
+  # Not sure if this actually has to be specified for the insertion
+  def decompress(data):
+      return zlib.decompress(data).decode('utf-8')
+
+  con.create_function("decompress", 1, decompress)
+#+END_SRC
+
+Doing it this way doesn't require putting the decompression function in the queries:
+
+#+BEGIN_SRC sql
+  SELECT book, text FROM verses WHERE text MATCH ?
+#+END_SRC
+
+Or the field names for =row_factory= access:
+
+#+BEGIN_SRC python
+  con = sqlite3.connect(filename)
+
+  def decompress(data):
+      return zlib.decompress(data).decode('utf-8')
+
+  con.create_function("decompress", 1, decompress)
+
+  # ...Do the query, and...
+  row['text']
+#+END_SRC
+
+And this is fast to search:
+
+#+BEGIN_EXAMPLE
+  $ time ./query.py search esv.compressed.zlib.pure-fts.sqlite Moses >/dev/null
+  0.11user 0.00system 0:00.11elapsed 99%CPU (0avgtext+0avgdata 15888maxresident)k
+  0inputs+0outputs (0major+2553minor)pagefaults 0swaps
+#+END_EXAMPLE
+
+The file size is 8.1 MB.
+
+*** FTS with external content and manually compressed insertions
+
+Using FTS with its =content== option stores the actual data in another table, and queries run against the FTS table that need data in the content table automatically fetch it.
+
+#+BEGIN_SRC sql
+  CREATE TABLE verses (
+  book TEXT, chapter INTEGER, verse INTEGER, text BLOB,
+  PRIMARY KEY(book, chapter, verse))
+
+  CREATE VIRTUAL TABLE fts USING fts4 (
+  book, chapter, verse, text,
+  content="verses", uncompress=decompress)
+#+END_SRC
+
+Then insertion is done with manual compression:
+
+#+BEGIN_SRC python
+  def compress(s):
+      return zlib.compress(s.encode('utf-8'), 9)
+
+  def decompress(data):
+      return zlib.decompress(data).decode('utf-8')
+
+  con = sqlite3.connect(db_filename)
+  con.create_function("compress", 1, compress)
+#+END_SRC
+
+#+BEGIN_SRC sql
+  INSERT INTO verses(book, chapter, verse, text) VALUES (?, ?, ?, compress(?))
+#+END_SRC
+
+And then the FTS database is rebuilt against the source table (which is easier than inserting into the index manually, or using triggers, and makes sense since we're only doing insertion in one batch):
+
+#+BEGIN_SRC sql
+  INSERT INTO fts(fts) VALUES('rebuild')
+
+  -- I think optimization still works, but I'm not sure:
+  INSERT INTO fts(fts) VALUES('optimize')
+#+END_SRC
+
+Queries are done against the FTS table, with the decompressor specified again:
+
+#+BEGIN_SRC sql
+  SELECT book, chapter, verse, decompress(text) FROM fts WHERE text MATCH ?
+#+END_SRC
+
+#+BEGIN_SRC python
+  def decompress(data):
+      return zlib.decompress(data).decode('utf-8')
+
+  con = sqlite3.connect(filename)
+  con.create_function("decompress", 1, decompress)
+
+  # ...Do query, and...
+  row['decompress(text)']
+#+END_SRC
+
+This is pretty fast:
+
+#+BEGIN_EXAMPLE
+  $ time ./query.py search esv.compressed.zlib.external-content.sqlite Moses >/dev/null
+  0.09user 0.02system 0:00.11elapsed 99%CPU (0avgtext+0avgdata 15944maxresident)k
+  0inputs+0outputs (0major+2587minor)pagefaults 0swaps
+#+END_EXAMPLE
+
+However the database is only slightly smaller than the uncompressed FTS one, at 8.9 MB.  Who knows, maybe I did a step wrong somewhere, because since the non-FTS database shrank by about 2.6 MB when compressed, it seems like the FTS table using the compressed one as external-content shouldn't add about 2.2 MB.  But I just ran =optimize= and =VACUUM= on the =fts= table again, and it made no difference, so I don't know what else to do.
+
+So for the compressed, FTS, external-content version it appears that it's less space-efficient than the compressed, pure-FTS version (I guess because it's storing the same data, plus extra data to correlate the index with the external content).  I guess this option makes more sense for "contentless" tables (and so I wonder in what cases external-content tables are useful...).
+
+*** Lookup speed
+
+IIRC, I was thinking that the pure-FTS table would be slower for key-based lookup (book, chapter, verse) since it [[https://www.sqlite.org/fts3.html#simple_fts_queries][can't be indexed on other columns]]:
+
+#+BEGIN_QUOTE
+FTS tables can be queried efficiently using SELECT statements of two different forms:
+
+Query by rowid. If the WHERE clause of the SELECT statement contains a sub-clause of the form "rowid = ?", where ? is an SQL expression, FTS is able to retrieve the requested row directly using the equivalent of an SQLite INTEGER PRIMARY KEY index.
+
+Full-text query. If the WHERE clause of the SELECT statement contains a sub-clause of the form "<column> MATCH ?", FTS is able to use the built-in full-text index to restrict the search to those documents that match the full-text query string specified as the right-hand operand of the MATCH clause.
+
+If neither of these two query strategies can be used, all queries on FTS tables are implemented using a linear scan of the entire table. If the table contains large amounts of data, this may be an impractical approach (the first example on this page shows that a linear scan of 1.5 GB of data takes around 30 seconds using a modern PC).
+#+END_QUOTE
+
+And since I didn't get the compressed, pure-FTS one working with chapter and verse numbers, I can't test that one.  However, I can test the uncompressed ones, and the lookup speed doesn't seem bad:
+
+#+BEGIN_EXAMPLE
+  $ time sqlite3 esv.without-rowid.sqlite "SELECT * FROM verses WHERE book LIKE 'Genesis' AND chapter=1 AND verse=1" >/dev/null
+  0.00user 0.00system 0:00.01elapsed 84%CPU (0avgtext+0avgdata 5400maxresident)k
+  0inputs+0outputs (0major+812minor)pagefaults 0swaps
+
+  $ time sqlite3 esv.fts.sqlite "SELECT * FROM verses WHERE book LIKE 'Genesis' AND chapter=1 AND verse=1" >/dev/null
+  0.02user 0.00system 0:00.03elapsed 90%CPU (0avgtext+0avgdata 5572maxresident)k
+  0inputs+0outputs (0major+811minor)pagefaults 0swaps
+#+END_EXAMPLE
+
+So it's 3 times slower to do lookups with the FTS one (which doesn't have indexes on book, chapter, or verse), but it's still 0.03 seconds, which is surely fast enough.  After all, the Python script is the bottleneck:
+
+#+BEGIN_EXAMPLE
+  $ time ./query.py lookup esv.fts.sqlite "Genesis 1:1" >/dev/null
+  0.09user 0.00system 0:00.10elapsed 97%CPU (0avgtext+0avgdata 17396maxresident)k
+  0inputs+0outputs (0major+2968minor)pagefaults 0swaps
+#+END_EXAMPLE
+
+*** Conclusion
+
+Let's compare the speeds and sizes:
+
+| Compression  | Search query                 | Speed | Size   |
+|--------------+------------------------------+-------+--------|
+| Uncompressed | LIKE (non-FTS)               |  0.13 | 6.4 MB |
+| Uncompressed | MATCH (FTS)                  |  0.10 | 9.3 MB |
+| Compressed   | LIKE (non-FTS)               |  0.33 | 3.8 MB |
+| Compressed   | MATCH (FTS)                  |  0.11 | 8.1 MB |
+| Compressed   | MATCH (FTS external-content) |  0.11 | 8.9 MB |
+
+Sorted by speed:
+
+| Compression  | Search query                 | Speed | Size   |
+|--------------+------------------------------+-------+--------|
+| Uncompressed | MATCH (FTS)                  |  0.10 | 9.3 MB |
+| Compressed   | MATCH (FTS)                  |  0.11 | 8.1 MB |
+| Compressed   | MATCH (FTS external-content) |  0.11 | 8.9 MB |
+| Uncompressed | LIKE (non-FTS)               |  0.13 | 6.4 MB |
+| Compressed   | LIKE (non-FTS)               |  0.33 | 3.8 MB |
+
+By size:
+
+| Compression  | Search query                 | Speed | Size   |
+|--------------+------------------------------+-------+--------|
+| Compressed   | LIKE (non-FTS)               |  0.33 | 3.8 MB |
+| Uncompressed | LIKE (non-FTS)               |  0.13 | 6.4 MB |
+| Compressed   | MATCH (FTS)                  |  0.11 | 8.1 MB |
+| Compressed   | MATCH (FTS external-content) |  0.11 | 8.9 MB |
+| Uncompressed | MATCH (FTS)                  |  0.10 | 9.3 MB |
+
+For my personal use, there's no reason to do compression, and the book-chapter-verse lookup is fast enough with FTS, so I might as well use uncompressed FTS.
+
+For general use, I'm not sure which is the best overall solution. The speed for the compressed, non-FTS version is much slower than the rest, but still much faster than Diatheke.  But on older, lower-powered systems (like old netbooks), that 0.33 seconds will be higher.  The size isn't important on-disk.  Over a network (if these "modules" were ever distributed), the size would be more important--but if it were really important, the JSON version of a module could be compressed with =xz= to a smaller size than the SWORD modules (and even =bzip2= or =gzip= on the JSON files makes them smaller than the SWORD modules).
+
+Of course, the SWORD modules are storing more data than I am here, as I haven't converted any metadata, so it's not a fair comparison.  Storing all the metadata in JSON and the SQLite files would surely make them larger than the SWORD modules.  However, size is not nearly so important as it was when the SWORD project started, and the convenience and ease-of-use on the programming side would probably make that tradeoff worth it.  And the SQLite databases can be compressed as files for transport, anyway: the uncompressed, pure-FTS SQLite database file goes down to 2.5 MB with =xz -9=.  And of course the SQLite databases can be generated locally from a more compressible format. 
+
+Another important thing to note: all of these tests were run on a single keyword query.  The FTS engine can easily do complex boolean matching (the syntax is very simple to use, like =Jesus Paul -apostle=), the non-FTS equivalent of which would probably be much slower and more difficult.  So that gives the FTS version a significant advantage for searching.
+
+Well, all of that aside, I think it would be fairly simple to support the different kinds of databases in the scripts, because they can inspect the database and determine which kind of query to make and whether to use decompression.
 
 * Design
 
@@ -267,6 +582,10 @@ So I do /not/ want a unique constraint on the =text= column, because even though
 *** Schema
 
 **** Primary key
+
+**** TODO =PRAGMA query_only=
+
+I should probably enable this after creating the database.
 
 **** Tables
 
