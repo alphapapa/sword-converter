@@ -3,6 +3,10 @@
 (require 'dash)
 (require 'ht)
 
+;; IDEA: Store verse text in a vector for constant-time access.  Map book-chapter-verse to verse
+;; text in hash-tables.  To lookup a range, lookup the starting and ending verse numbers, then fetch
+;; that range.
+
 ;;;; Functions
 
 (defun elsword-json-to-ht (bible)
@@ -67,6 +71,46 @@ The hash table will have these special keys:
       (a-list 'books books
               'book-names book-names))))
 
+(defun elsword-json-to-hybrid-ht (bible)
+  ;; FIXME: Docstring
+  "Return BIBLE as a hash-table.
+BIBLE should be a list of alists of the form:
+
+'(\"Genesis\" 1 1 \"In the beginning...\")
+
+The verses in the hash table will have keys of the form:
+
+'(\"Genesis\" 1 1)
+
+The hash table will have these special keys:
+
+`books': A list of the books found in BIBLE, in order."
+  (cl-labels ((transform-book-name (name)
+                                   (if (string-match (rx bos (one-or-more "I")) name)
+                                       (let ((length (length (match-string 0 name))))
+                                         (s-replace-regexp (rx bos (1+ "I")) (int-to-string length) name))
+                                     name)))
+    (let* ((map-key-to-verse-num (ht))
+           (map-verse-num-to-key)
+           (verse-counter 0)
+           book-names
+           verses)
+      (seq-doseq (it bible)
+        (pcase-let* (((map book chapter verse text) it)
+                     (book-name (transform-book-name book))
+                     (key (list book-name chapter verse)))
+          (ht-set map-key-to-verse-num key verse-counter)
+          (push key map-verse-num-to-key)
+          (push book-name book-names)
+          (push text verses)
+          (incf verse-counter)))
+      (setq book-names (nreverse (-uniq book-names)))
+      (setq map-verse-num-to-key (apply #'vector (nreverse map-verse-num-to-key)))
+      (ht ('books book-names)
+          ('key-to-num-map map-key-to-verse-num)
+          ('num-to-key-map map-verse-num-to-key)
+          ('verses (apply #'vector (nreverse verses)))))))
+
 (let ((name "I John"))
   (if (string-match (rx bos (one-or-more "I")) name)
       (let ((length (length (match-string 0 name))))
@@ -81,7 +125,7 @@ The hash table will have these special keys:
 If NAME does not exactly match a name in BIBLE, return all
 partial matches."
   ;; FIXME: Docstring
-  (let ((books (a-get bible 'book-names)))
+  (let ((books (ht-get bible 'books)))
     (if (member name books)
         ;; Always return a list
         (list name)
@@ -105,124 +149,7 @@ partial matches."
 (defun elsword-lookup (bible book chapter verse)
   (ht-get (a-get bible 'verses) (list book chapter verse)))
 
-(defun elsword-lookup-range (bible key1 key2)
-  ;; NOTE: Works but just for entire books.
-  (cl-labels ((book-chapters (book)
-                             (cl-loop for chapter-num from 1
-                                      for chapter = (chapter-verses chapter-num)
-                                      while chapter
-                                      append chapter))
-              (chapter-verses (chapter-num)
-                              (cl-loop for verse-num from 1
-                                       for key = (list book chapter-num verse-num)
-                                       for text = (ht-get all-verses key)
-                                       while text
-                                       append (a-list 'key key
-                                                      'text text))))
-    (pcase-let* (((map ('books all-books) ('verses all-verses)) bible)
-                 (`(,book1 ,chapter1 ,verse1) key1)
-                 (`(,book2 ,chapter2 ,verse2) key2)
-                 (book1-index (seq-position all-books book1))
-                 (book2-index (seq-position all-books book2))
-                 (books (-slice all-books book1-index (1+ book2-index)))
-                 (result))
-      (cl-loop for book in books
-               append (book-chapters book)))))
-
-(defun elsword-lookup-range (bible key1 key2)
-  ;; NOTE: Aborted attempt
-  (cl-labels ((book-chapters (book)
-                             (cl-loop for chapter-num from 1
-                                      for chapter = (chapter-verses chapter-num)
-                                      while chapter
-                                      append chapter))
-              (chapter-verses (chapter-num &optional (start 1) end)
-                              (cl-loop for verse-num from start
-                                       for key = (list book chapter-num verse-num)
-                                       for text = (ht-get all-verses key)
-                                       while (and text
-                                                  (or (not end)
-                                                      (< verse-num end)))
-                                       append (a-list 'key key
-                                                      'text text))))
-    (pcase-let* (((map ('books all-books) ('verses all-verses)) bible)
-                 (`(,book1 ,chapter1 ,verse1) key1)
-                 (`(,book2 ,chapter2 ,verse2) key2)
-                 (book1-index (seq-position all-books book1))
-                 (book2-index (seq-position all-books book2))
-                 (books (-slice all-books book1-index (1+ book2-index)))
-                 (result))
-      (append
-       ;; Up to first whole book
-       (cl-loop with chapter-num = chapter1
-                with verse-num = verse1
-                with book-end = t
-                for key = (list book1 chapter-num verse-num)
-                for text = (ht-get all-verses key)
-                if text
-                collect text
-                and do (progn
-                         (incf verse-num)
-                         (setq book-end nil))
-                else do (cond (book-end (return))
-                              (t (incf chapter-num)
-                                 (setq verse-num 1
-                                       book-end t))))
-       ;; Middle (entire) books
-       (cl-loop with books = (cons book1 (butlast books))
-                for book in books
-                append (book-chapters book))))))
-
-(defun elsword-lookup-range (bible key1 key2)
-  ;; NOTE: Aborted, pre-nested-ht attempt
-  (cl-labels ((book-name (name)
-                         (let ((books (elsword-book-names bible name)))
-                           (when (> (length books) 1)
-                             (user-error "Ambiguous book name: %s" name))
-                           (car books)))
-              (book-chapters (book &optional (chapter-start 1) (verse-start 1) chapter-end verse-end)
-                             (cl-loop for chapter-num from chapter-start
-                                      for chapter = (cond ((and chapter-end
-                                                                (= chapter-num chapter-end))
-                                                           ;; Last chapter
-                                                           (chapter-verses chapter-num 1))
-                                                          ((chapter-verses chapter-num verse-start)))
-                                      while (and chapter
-                                                 (or (not chapter-end)
-                                                     (<= chapter-num chapter-end)))
-                                      append chapter))
-              (chapter-verses (chapter-num &optional (start 1) end)
-                              (cl-loop for verse-num from start
-                                       for key = (list book chapter-num verse-num)
-                                       for text = (ht-get all-verses key)
-                                       while (and text
-                                                  (or (not end)
-                                                      (<= verse-num end)))
-                                       collect (cons key text))))
-    (pcase-let* (((map ('books all-books) ('verses all-verses)) bible)
-                 (`(,book1 ,chapter1 ,verse1) key1)
-                 (`(,book2 ,chapter2 ,verse2) key2)
-                 (book1 (book-name book1))
-                 (book2 (book-name book2))
-                 (book1-index (seq-position all-books book1))
-                 (book2-index (seq-position all-books book2))
-                 (books (-slice all-books book1-index (1+ book2-index)))
-                 (verses ))
-      (cond ((equal book1 book2)
-             ;; Within a single book
-             (book-chapters book1 chapter1 verse1 chapter2 verse2))
-            (t (cl-loop for book in books
-                        append (cond ((equal book book1)
-                                      ;; First book
-                                      (book-chapters book chapter1 verse1))
-                                     ((equal book book2)
-                                      ;; Last book: pass last chapter/verse as arguments
-                                      (book-chapters book 1 1 chapter2 verse2))
-                                     (t
-                                      ;; Middle books
-                                      (book-chapters book 1 1 book2 verse2)))))))))
-
-(defun elsword-lookup-range (bible key1 key2)
+(defun elsword-lookup-range (bible from to)
   ;; NOTE: nested-ht version
   (cl-labels ((book-name (name)
                          (let ((matches (elsword-book-names bible name)))
@@ -230,28 +157,28 @@ partial matches."
                              (user-error "Ambiguous book name: %s" name))
                            (car matches))))
     (pcase-let* (((map book-names books) bible)
-                 (`(,book1 ,chapter1 ,verse1) key1)
-                 (`(,book2 ,chapter2 ,verse2) key2)
-                 (book1 (book-name book1))
-                 (book2 (book-name book2))
-                 (book1-index (seq-position book-names book1))
-                 (book2-index (seq-position book-names book2))
-                 (book-names (-slice book-names book1-index (1+ book2-index))))
+                 (`(,from-book ,from-chapter ,from-verse) from)
+                 (`(,to-book ,to-chapter ,to-verse) to)
+                 (from-book (book-name from-book))
+                 (to-book (book-name to-book))
+                 (from-book-index (seq-position book-names from-book))
+                 (to-book-index (seq-position book-names to-book))
+                 (book-names (-slice book-names from-book-index (1+ to-book-index))))
       (cl-loop for book in book-names
-               for starting-chapter = (if (equal book book1)
-                                          chapter1
+               for starting-chapter = (if (equal book from-book)
+                                          from-chapter
                                         1)
-               for ending-chapter = (if (equal book book2)
-                                        chapter2
+               for ending-chapter = (if (equal book to-book)
+                                        to-chapter
                                       nil)
                append (cl-loop for chapter from starting-chapter
-                               for starting-verse = (if (and (equal book book1)
-                                                             (equal chapter chapter1))
-                                                        verse1
+                               for starting-verse = (if (and (equal book from-book)
+                                                             (equal chapter from-chapter))
+                                                        from-verse
                                                       1)
-                               for ending-verse = (if (and (equal book book2)
-                                                           (equal chapter chapter2))
-                                                      verse2
+                               for ending-verse = (if (and (equal book to-book)
+                                                           (equal chapter to-chapter))
+                                                      to-verse
                                                     nil)
                                for verses = (cl-loop for verse from starting-verse
                                                      for text = (ignore-errors (ht-get* books book chapter verse))
@@ -350,6 +277,34 @@ partial matches."
 ;; Convert list to hash table
 (setq elsword-esv-ht (elsword-json-to-ht elsword-esv-json))
 (setq elsword-esv-ht (elsword-json-to-nested-ht elsword-esv-json))
+(setq elsword-esv-hybrid-ht (elsword-json-to-hybrid-ht elsword-esv-json))
+
+(defun lookup (bible key)
+  (let* ((key (elsword-split-key bible key))
+         (verse-num (ht-get* bible 'map key))
+         (text (elt (ht-get bible 'verses) verse-num)))
+    (list key text)))
+
+(defun lookup (bible from &optional to)
+  ;; TODO: Handle full-chapter and full-book lookup
+  (let* ((from (elsword-split-key bible from))
+         (to (when to (elsword-split-key bible to)))
+         (from-verse-num (ht-get* bible 'key-to-num-map from))
+         (to-verse-num (if to
+                           (ht-get* bible 'key-to-num-map to)
+                         from-verse-num)))
+    (cl-loop for verse-num from from-verse-num to to-verse-num
+             for key = (elt (ht-get bible 'num-to-key-map) verse-num)
+             for text = (elt (ht-get bible 'verses) verse-num)
+             collect (cons key text))))
+
+(lookup elsword-esv-hybrid-ht "Gen 1:1")
+(message "%s" (lookup elsword-esv-hybrid-ht "Mark 1:2"))
+
+(lookup elsword-esv-hybrid-ht "Matt 1:1" "Mark 1:3")
+(s-join "  " (--map (cdr it) (lookup elsword-esv-hybrid-ht "John 1:1" "John 1:3")))
+(setq print-length nil)
+(bench 1 (lookup elsword-esv-hybrid-ht "Gen 1:1" "Gen 1:3"))
 
 ;;;;; Book names
 
@@ -370,6 +325,7 @@ partial matches."
 (elsword-lookup elsword-esv-ht "Genesis" 1 1)
 
 (elsword-lookup-range elsword-esv-ht '("Matt" 28 19) '("Mark" 1 2))
+(elsword-lookup-range elsword-esv-ht '("Matt" 28 19) '("Matt" 28 20))
 (elsword-lookup-range elsword-esv-ht '("Gen" 28 18) '("Gen" 28 19))
 (elsword-lookup-range elsword-esv-ht '("Gen" 1 1) '("Gen" 1 2))
 
