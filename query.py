@@ -196,10 +196,8 @@ def colorize_matches(s, keywords=None, color_map=None):
     "Return string S with KEYWORDS highlighted."
 
     for keyword in keywords:
-        replacement = color_map[keyword]
-        # NOTE: Case will be changed when it differs.  (I wish it
-        # could fix that automatically, like Emacs!)
-        s = re.sub(keyword, replacement, s, re.IGNORECASE)
+        replacement = color_map[keyword.lower()]
+        s = re.sub(keyword, replacement, s, flags=re.IGNORECASE)
 
     return s
 
@@ -303,7 +301,7 @@ def search(filename, keywords, output):
         # Prepare colors
         color_map = {}
         for word in keywords:
-            color_map[word] = next(COLOR_REPLACEMENTS)
+            color_map[word.lower()] = next(COLOR_REPLACEMENTS)
 
         if output == 'plain':
             render_plain(result, keywords=keywords, color_map=color_map)
